@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -161,6 +162,12 @@ _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 _UNIT_DAYS = {"second": 0, "minute": 0, "hour": 0, "day": 1, "week": 7, "month": 30, "year": 365}
 
+# Inclusive lower bound. Search queries pass this to YouTube as after:YYYY-MM-DD
+# so results stop at the present; nothing published before this date is kept.
+PUBLISHED_FROM = date(2025, 1, 1)
+
+_ISO_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
 
 def parse_count(text: Optional[str]) -> Optional[int]:
     """'866K subscribers' -> 866000, '203,596,900 views' -> 203596900, 'No views' -> 0."""
@@ -192,6 +199,28 @@ def parse_age_days(text: Optional[str]) -> Optional[int]:
         return None
     amount, unit = int(match.group(1)), match.group(2).lower()
     return amount * _UNIT_DAYS[unit]
+
+
+def published_since(text: Optional[str], since: date = PUBLISHED_FROM) -> bool:
+    """Whether a publish stamp falls on or after ``since`` (default 2025-01-01).
+
+    Video details use an ISO-8601 date (``2025-03-04T06:00:00-08:00``). Search
+    hits only carry a relative label (``3 years ago``). Relative labels are
+    rejected when they are older than ``since``; an unparseable label is kept
+    because the search query already applies YouTube's ``after:`` operator.
+    """
+    if not text:
+        return True
+    iso = _ISO_DATE_RE.match(text.strip())
+    if iso:
+        try:
+            return date.fromisoformat(iso.group(1)) >= since
+        except ValueError:
+            return True
+    age_days = parse_age_days(text)
+    if age_days is None:
+        return True
+    return age_days <= (date.today() - since).days
 
 
 def extract_email(*texts: Optional[str]) -> Optional[str]:
@@ -390,6 +419,8 @@ def search_micro_influencers(
             single video, so a lucky viral upload doesn't disqualify a creator.
     require_verified_country: drop channels that don't publish a European
             country on their About page (otherwise they're kept and flagged).
+    Only videos published on or after 2025-01-01 are fetched. YouTube's
+    ``after:`` operator applies that cutoff at search time (through today).
 
     Each result contains: country, subscribers, avg views (30d window for active
     channels, 90d for less active), niche hints, contact details, and risk/trend
@@ -430,8 +461,12 @@ def search_micro_influencers(
             hits: List[Any] = []
             seen_videos: set = set()
             for query in queries:
+                # after: is inclusive of PUBLISHED_FROM and open-ended through today.
+                dated_query = f"{query} after:{PUBLISHED_FROM.isoformat()}"
                 try:
-                    for hit in search_yt.search(query, filter=SearchFilter.VIDEOS, max_results=per_region_limit):
+                    for hit in search_yt.search(dated_query, filter=SearchFilter.VIDEOS, max_results=per_region_limit):
+                        if not published_since(hit.published):
+                            continue
                         if hit.video_id not in seen_videos:
                             seen_videos.add(hit.video_id)
                             hits.append(hit)
@@ -521,13 +556,19 @@ def search_micro_influencers(
         not p["in_eu"],
         -(p["avg_views"] or 0),
     ))
-    selected = profiles[:max_results]
 
     # Enrich only the shortlist with video details + transcript (expensive calls).
-    for profile in selected:
+    # Walk past the first page of the pool so a video whose exact publish date
+    # is before 2025-01-01 can be dropped without shrinking the result set.
+    selected: List[Dict] = []
+    for profile in profiles:
+        if len(selected) >= max_results:
+            break
         try:
             with YouTube(language="en", region=profile["country_code"]) as yt:
                 details = yt.video(profile["video_id"])
+                if details.published and not published_since(details.published):
+                    continue
                 profile["recent_video_views"] = details.views or 0
                 profile["views"] = profile["recent_video_views"]
                 profile["length_seconds"] = details.length_seconds
@@ -553,5 +594,6 @@ def search_micro_influencers(
 
         if not profile["contact_email"]:
             profile["contact_email"] = "N/A (use 'View email address' on channel About page)"
+        selected.append(profile)
 
     return selected

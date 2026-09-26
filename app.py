@@ -1,7 +1,5 @@
 import csv
 import io
-import json
-import os
 from datetime import date
 
 import streamlit as st
@@ -61,7 +59,7 @@ LIVE_SCRAPERS = {
     "TikTok (Live Scraper)": (search_tiktok_micro_influencers, "Harvesting TikTok creators via search index & public profile pages..."),
     "Instagram (Live Scraper)": (search_instagram_micro_influencers, "Harvesting Instagram creators via search index & public profile pages..."),
 }
-platform = st.sidebar.selectbox("Target Platform", [*LIVE_SCRAPERS, "Twitch (Mock)"])
+platform = st.sidebar.selectbox("Target Platform", list(LIVE_SCRAPERS))
 keyword = st.sidebar.text_input("Target Keyword / Niche", value="budget gaming pc build")
 
 st.sidebar.subheader("Filter Settings")
@@ -104,7 +102,7 @@ require_verified_country = st.sidebar.checkbox("Only channels with a verified Eu
 if st.button("🚀 Run Discovery & Scoring Engine"):
     if not selected_regions:
         st.error("Select at least one target region.")
-    elif platform in LIVE_SCRAPERS:
+    else:
         scraper, spinner_text = LIVE_SCRAPERS[platform]
         with st.spinner(spinner_text):
             raw_candidates = scraper(
@@ -141,22 +139,6 @@ if st.button("🚀 Run Discovery & Scoring Engine"):
                 "region": region_file_slug(selected_regions),
                 "keyword": keyword,
             }
-
-    else:
-        # Mock Platform Handling for Twitch UI demo
-        st.info(f"Loaded pre-cached demo profiles for {platform}.")
-        mock_file = "data/mock_twitch.json"
-        
-        if os.path.exists(mock_file):
-            with open(mock_file, "r") as f:
-                st.session_state["results"] = json.load(f)
-                st.session_state["results_meta"] = {
-                    "platform": "twitch",
-                    "region": region_file_slug(selected_regions),
-                    "keyword": keyword,
-                }
-        else:
-            st.warning("Mock data file not found. Populate data/mock_twitch.json to enable demo view.")
 
 # Render Results
 if "results" in st.session_state and st.session_state["results"]:
