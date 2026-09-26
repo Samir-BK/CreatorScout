@@ -239,9 +239,12 @@ def _walk(node: Any, key: str, acc: List[Any]) -> List[Any]:
     return acc
 
 
-def _detect(text: str, vocab: Dict[str, List[str]]) -> List[str]:
+def detect_terms(text: str, vocab: Dict[str, List[str]]) -> List[str]:
     haystack = f" {text.lower()} "
     return [label for label, needles in vocab.items() if any(n in haystack for n in needles)]
+
+
+_detect = detect_terms
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +472,7 @@ def search_micro_influencers(
                 links = {k: v for k, v in (channel.links or {}).items() if k != "youtube"}
 
                 profile = {
+                    "platform": "YouTube",
                     # Identity
                     "channel_name": channel.title or hit.channel,
                     "channel_handle": channel.handle,

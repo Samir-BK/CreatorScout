@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import os
 from modules.discovery import search_micro_influencers, EUROPEAN_COUNTRIES, EU_COUNTRIES
+from modules.tiktok_discovery import search_tiktok_micro_influencers
 from modules.scorer import score_creator_fit
 from modules.outreach import generate_pitch_email
 
@@ -14,7 +15,11 @@ st.caption("Automated creator discovery, transcript relevance scoring, and outre
 # Sidebar Controls
 st.sidebar.header("🔍 Discovery Parameters")
 
-platform = st.sidebar.selectbox("Target Platform", ["YouTube (Live Scraper)", "TikTok (Mock)", "Twitch (Mock)"])
+LIVE_SCRAPERS = {
+    "YouTube (Live Scraper)": (search_micro_influencers, "Searching YouTube & extracting transcripts via ytscrape..."),
+    "TikTok (Live Scraper)": (search_tiktok_micro_influencers, "Harvesting TikTok creators via search index & public profile pages..."),
+}
+platform = st.sidebar.selectbox("Target Platform", [*LIVE_SCRAPERS, "Twitch (Mock)"])
 keyword = st.sidebar.text_input("Target Keyword / Niche", value="budget gaming pc build")
 
 st.sidebar.subheader("Filter Settings")
@@ -35,9 +40,10 @@ require_verified_country = st.sidebar.checkbox("Only channels with a verified Eu
 
 # Main Action Button
 if st.button("🚀 Run Discovery & Scoring Engine"):
-    if platform == "YouTube (Live Scraper)":
-        with st.spinner("Searching YouTube & extracting transcripts via ytscrape..."):
-            raw_candidates = search_micro_influencers(
+    if platform in LIVE_SCRAPERS:
+        scraper, spinner_text = LIVE_SCRAPERS[platform]
+        with st.spinner(spinner_text):
+            raw_candidates = scraper(
                 keyword=keyword,
                 max_results=max_results,
                 max_views=max_views,
@@ -67,15 +73,15 @@ if st.button("🚀 Run Discovery & Scoring Engine"):
             st.session_state["results"] = scored_candidates
 
     else:
-        # Mock Platform Handling for TikTok / Twitch UI demo
+        # Mock Platform Handling for Twitch UI demo
         st.info(f"Loaded pre-cached demo profiles for {platform}.")
-        mock_file = "data/mock_tiktok.json" if "TikTok" in platform else "data/mock_twitch.json"
+        mock_file = "data/mock_twitch.json"
         
         if os.path.exists(mock_file):
             with open(mock_file, "r") as f:
                 st.session_state["results"] = json.load(f)
         else:
-            st.warning("Mock data file not found. Populate data/mock_tiktok.json to enable demo view.")
+            st.warning("Mock data file not found. Populate data/mock_twitch.json to enable demo view.")
 
 # Render Results
 if "results" in st.session_state and st.session_state["results"]:
