@@ -6,11 +6,10 @@ calls those. It mirrors ``modules.tiktok_discovery``:
 
 1. Finds creators through the DuckDuckGo/Bing search index (site:instagram.com),
    using the same per-country localized queries as the YouTube / TikTok scrapers.
-2. Reads each creator's public profile page and the matched reel/post embed
-   with a crawler user-agent. Those pages still server-render:
-     - profile  -> followers, following, posts, bio, display name
-     - embed    -> view count, likes, caption, duration, owner
-     - post meta -> likes, date, caption (fallback when embed is thin)
+2. Reads public embed pages with a crawler user-agent. Profile URLs now
+   redirect to login, but the embed pages still include:
+     - profile embed -> followers, post count, display name
+     - post embed    -> view count, likes, caption, owner
 3. Collects extra recent posts for the same handle from the search index so
    30-day / 90-day view averages can be computed.
 
@@ -19,7 +18,6 @@ The returned dictionaries use exactly the same keys as
 layers treat Instagram the same as YouTube and TikTok.
 """
 
-import html as html_lib
 import json
 import re
 import time
@@ -42,7 +40,6 @@ from modules.discovery import (
     detect_terms,
     extract_email,
     localize_keyword,
-    parse_count,
     resolve_country,
 )
 
@@ -73,25 +70,11 @@ _HANDLE_IN_PATH_RE = re.compile(
     re.I,
 )
 _HANDLE_FROM_TITLE_RE = re.compile(r"\(@([\w.]+)\)")
-_META_CONTENT_RE = re.compile(
-    r'<meta[^>]+(?:name|property)="([^"]+)"[^>]+content="([^"]*)"',
-    re.I,
-)
-_META_CONTENT_RE_ALT = re.compile(
-    r'<meta[^>]+content="([^"]*)"[^>]+(?:name|property)="([^"]+)"',
-    re.I,
-)
 _POST_DESC_RE = re.compile(
     r"(?P<likes>[\d,]+)\s+likes(?:,\s+(?P<comments>[\d,]+)\s+comments)?"
     r"\s+-\s+(?P<handle>[\w.]+)\s+on\s+(?P<date>[A-Z][a-z]+ \d{1,2}, \d{4}):\s+"
     r'"(?P<caption>.*)"',
     re.S,
-)
-_PROFILE_STATS_RE = re.compile(
-    r"(?P<followers>[\d.,]+[KMB]?)\s+Followers,\s+"
-    r"(?P<following>[\d.,]+[KMB]?)\s+Following,\s+"
-    r"(?P<posts>[\d.,]+[KMB]?)\s+Posts",
-    re.I,
 )
 _JSON_SCRIPT_RE = re.compile(
     r'<script type="application/json"[^>]*>(.*?)</script>', re.S
@@ -141,19 +124,6 @@ def _parallel(fn, items: List[Any], workers: int = 6) -> List[Any]:
         return []
     with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
         return list(pool.map(fn, items))
-
-
-def _unescape(text: str) -> str:
-    return html_lib.unescape(text.replace("&#064;", "@"))
-
-
-def _metas(html: str) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    for name, content in _META_CONTENT_RE.findall(html):
-        out[name] = _unescape(content)
-    for content, name in _META_CONTENT_RE_ALT.findall(html):
-        out.setdefault(name, _unescape(content))
-    return out
 
 
 def _json_scripts(html: str) -> List[Any]:
@@ -268,63 +238,100 @@ def _bio_links(*texts: Optional[str]) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 
 def _json_string(html: str, key: str) -> Optional[str]:
-    match = re.search(rf'\\?"{key}\\?"\s*:\s*\\?"((?:\\.|[^"\\])*)', html)
+    """Read one escaped JSON string. Embed HTML delimits values with backslash-quote."""
+    match = re.search(
+        rf'\\?"{re.escape(key)}\\?"\s*:\s*\\?"(.*?)\\?"',
+        html,
+        re.S,
+    )
     if not match:
         return None
-    raw = match.group(1).replace('\\"', '"').replace("\\/", "/")
+    text = match.group(1).replace("\\/", "/")
+    # Embed JSON is often escaped twice, so \\u00fc arrives as the letters \u00fc.
+    for _ in range(3):
+        if not re.search(r"\\u[0-9a-fA-F]{4}", text) and "\\n" not in text and '\\"' not in text:
+            break
+        try:
+            decoded = text.encode("utf-8").decode("unicode_escape")
+        except UnicodeDecodeError:
+            break
+        if decoded == text:
+            break
+        text = decoded
+    text = _repair_text(text).strip()
+    return text or None
+
+
+def _repair_text(text: str) -> str:
+    """Turn leftover UTF-16 surrogate pairs from Instagram JSON into real characters."""
     try:
-        return json.loads(f'"{raw}"')
-    except json.JSONDecodeError:
-        return raw
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
+
+def _owner_id(html: str, handle: str) -> str:
+    """Owner id sits just before the username. A media id further up the page does not."""
+    for match in re.finditer(
+        rf'\\?"username\\?"\s*:\s*\\?"{re.escape(handle)}\\?"',
+        html,
+        re.I,
+    ):
+        window = html[max(0, match.start() - 2500):match.start()]
+        ids = re.findall(r'\\?"id\\?"\s*:\s*\\?"(\d+)\\?"', window)
+        if ids:
+            return ids[-1]
+    return handle
+
+
+def _flag_near_username(html: str, handle: str, flag: str) -> Optional[bool]:
+    match = re.search(
+        rf'\\?"username\\?"\s*:\s*\\?"{re.escape(handle)}\\?".{{0,400}}\\?"{flag}\\?"\s*:\s*(true|false)',
+        html,
+        re.I,
+    )
+    if not match:
+        return None
+    return match.group(1).lower() == "true"
+
+
+def _account_from_embed(html: str, handle: str) -> Optional[Dict]:
+    """
+    Public profile and post embed pages still include follower counts.
+    The profile URL itself now redirects to the login wall.
+    """
+    followers = _extract_int(html, "followers_count")
+    if followers is None:
+        followed = re.search(
+            r'edge_followed_by\\?"\s*:\s*\{\s*\\?"count\\?"\s*:\s*(\d+)',
+            html,
+        )
+        followers = int(followed.group(1)) if followed else None
+    if followers is None:
+        return None
+    if _flag_near_username(html, handle, "is_private"):
+        return None
+
+    posts = _extract_int(html, "posts_count")
+    return {
+        "handle": handle,
+        "nickname": _json_string(html, "full_name") or handle,
+        "user_id": _owner_id(html, handle),
+        "bio": _json_string(html, "biography") or "",
+        "bio_link": _json_string(html, "external_url"),
+        "followers": followers,
+        "following": _extract_int(html, "following_count"),
+        "video_count": posts,
+        "is_verified": _flag_near_username(html, handle, "is_verified") or False,
+    }
 
 
 def fetch_profile(session: requests.Session, handle: str) -> Optional[Dict]:
-    html = _get(session, f"https://www.instagram.com/{handle}/")
+    html = _get(session, f"https://www.instagram.com/{handle}/embed/")
     if not html:
         return None
-    if '"is_private":true' in html or "this account is private" in html.lower():
-        return None
-
-    metas = _metas(html)
-    stats_match = None
-    for value in metas.values():
-        stats_match = _PROFILE_STATS_RE.search(value)
-        if stats_match:
-            break
-
-    followers = _extract_int(html, "follower_count")
-    following = _extract_int(html, "following_count")
-    posts = _extract_int(html, "media_count")
-    if stats_match:
-        followers = followers or parse_count(stats_match.group("followers"))
-        following = following if following is not None else parse_count(stats_match.group("following"))
-        posts = posts or parse_count(stats_match.group("posts"))
-
-    bio = _json_string(html, "biography") or ""
-    if not bio:
-        desc = metas.get("og:description") or metas.get("description") or ""
-        quoted = re.search(r'on Instagram: "(.*)"\s*$', desc, re.S)
-        bio = quoted.group(1) if quoted else ""
-
-    display = _json_string(html, "full_name")
-    if not display:
-        title = metas.get("og:title") or metas.get("twitter:title") or ""
-        display = title.split("(@")[0].strip() or handle
-
-    if followers is None and not bio and not stats_match:
-        return None
-
-    return {
-        "handle": handle,
-        "nickname": display or handle,
-        "user_id": str(_extract_int(html, "pk") or metas.get("instapp:owner_user_id") or handle),
-        "bio": bio,
-        "bio_link": _json_string(html, "external_url"),
-        "followers": followers,
-        "following": following,
-        "video_count": posts,
-        "is_verified": '"is_verified":true' in html,
-    }
+    return _account_from_embed(html, handle)
 
 
 def fetch_post(session: requests.Session, shortcode: str) -> Optional[Dict]:
@@ -341,25 +348,23 @@ def fetch_post(session: requests.Session, shortcode: str) -> Optional[Dict]:
         liked = re.search(r'edge_liked_by\\?"\s*:\s*\{\s*\\?"count\\?"\s*:\s*(\d+)', html)
         likes = int(liked.group(1)) if liked else None
     comments = _extract_int(html, "comment_count")
+    if comments is None:
+        commented = re.search(
+            r'edge_media_to_comment\\?"\s*:\s*\{\s*\\?"count\\?"\s*:\s*(\d+)',
+            html,
+        )
+        comments = int(commented.group(1)) if commented else None
     duration = _extract_int(html, "video_duration")
     handle_match = re.search(r'\\"username\\":\\"([\w.]+)', html) or re.search(
         r'"username"\s*:\s*"([\w.]+)"', html
-    )
-    text_match = re.search(r'\\"text\\":\\"(.+?)\\"', html) or re.search(
-        r'"text"\s*:\s*"((?:\\.|[^"\\])*)"', html
-    )
-    caption = ""
-    if text_match:
-        raw = text_match.group(1)
-        try:
-            caption = raw.encode("utf-8").decode("unicode_escape")
-            if "\\u" in caption:
-                caption = caption.encode("utf-8").decode("unicode_escape")
-        except UnicodeDecodeError:
-            caption = raw
+    ) or re.search(r'user\?username=([\w.]+)', html)
+    caption = _json_string(html, "text") or ""
     handle = handle_match.group(1) if handle_match else None
     if not handle and not caption and views is None and likes is None:
         return None
+    created = _extract_int(html, "taken_at_timestamp")
+    published = datetime.fromtimestamp(created, tz=timezone.utc) if created else None
+    account = _account_from_embed(html, handle) if handle else None
     return {
         "video_id": shortcode,
         "handle": handle,
@@ -368,10 +373,15 @@ def fetch_post(session: requests.Session, shortcode: str) -> Optional[Dict]:
         "likes": likes or 0,
         "comments": comments or 0,
         "duration": duration,
-        "created_unix": None,
-        "published": None,
-        "age_days": 14,
+        "created_unix": created,
+        "published": published,
+        "age_days": _age_days(published) if published else 14,
         "hashtags": re.findall(r"#(\w+)", caption or ""),
+        "followers": None if account is None else account["followers"],
+        "nickname": None if account is None else account["nickname"],
+        "user_id": None if account is None else account["user_id"],
+        "video_count": None if account is None else account["video_count"],
+        "is_verified": False if account is None else account["is_verified"],
     }
 
 
@@ -582,6 +592,18 @@ def search_instagram_micro_influencers(
             if len(profiles) >= target_pool:
                 break
             account = accounts.get(handle)
+            if not account and post and post.get("followers") is not None:
+                account = {
+                    "handle": handle,
+                    "nickname": post.get("nickname") or handle,
+                    "user_id": post.get("user_id") or handle,
+                    "bio": "",
+                    "bio_link": None,
+                    "followers": post["followers"],
+                    "following": None,
+                    "video_count": post.get("video_count"),
+                    "is_verified": post.get("is_verified") or False,
+                }
             if not account:
                 continue
             followers = account["followers"]
@@ -655,7 +677,9 @@ def search_instagram_micro_influencers(
                 "video_id": matched_id,
                 "video_title": (post or {}).get("desc") or hit["title"] or f"Instagram by @{handle}",
                 "video_url": matched_url,
-                "channel_description": (account["bio"] or "")[:600],
+                "channel_description": (
+                    account["bio"] or (post or {}).get("desc") or hit["snippet"] or ""
+                )[:600],
                 "recent_video_views": (post or {}).get("views", 0),
                 "views": (post or {}).get("views", 0),
                 "length_seconds": (post or {}).get("duration"),
