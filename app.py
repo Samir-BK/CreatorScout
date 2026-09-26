@@ -27,6 +27,40 @@ CSV_FIELDS = [
 ]
 
 
+def utf8_text(value: object) -> str:
+    """Text that can be encoded as UTF-8.
+
+    Scraped titles and transcripts sometimes contain lone UTF-16 surrogates.
+    Those cannot be encoded for the CSV download. Valid surrogate pairs are
+    restored to characters; anything still invalid is replaced.
+    """
+    text = "" if value is None else str(value)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    return text
+
+
+def clean_creator(creator: dict) -> dict:
+    cleaned: dict = {}
+    for key, value in creator.items():
+        if isinstance(value, str):
+            cleaned[key] = utf8_text(value)
+        elif isinstance(value, list):
+            cleaned[key] = [utf8_text(item) if isinstance(item, str) else item for item in value]
+        elif isinstance(value, dict):
+            cleaned[key] = {
+                utf8_text(item_key) if isinstance(item_key, str) else item_key: (
+                    utf8_text(item) if isinstance(item, str) else item
+                )
+                for item_key, item in value.items()
+            }
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 def creators_to_csv(creators: list[dict]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=CSV_FIELDS, extrasaction="ignore")
@@ -36,11 +70,13 @@ def creators_to_csv(creators: list[dict]) -> str:
         for field in CSV_FIELDS:
             value = creator.get(field)
             if isinstance(value, list):
-                value = "; ".join(str(item) for item in value)
+                value = "; ".join(utf8_text(item) for item in value)
             elif isinstance(value, dict):
-                value = "; ".join(f"{key}: {item}" for key, item in value.items())
+                value = "; ".join(f"{utf8_text(key)}: {utf8_text(item)}" for key, item in value.items())
             elif isinstance(value, bool):
                 value = "yes" if value else "no"
+            elif isinstance(value, str):
+                value = utf8_text(value)
             row[field] = "" if value is None else value
         writer.writerow(row)
     return buffer.getvalue()
@@ -142,6 +178,7 @@ if st.button("🚀 Run Discovery & Scoring Engine"):
 
 # Render Results
 if "results" in st.session_state and st.session_state["results"]:
+    results = [clean_creator(creator) for creator in st.session_state["results"]]
     st.divider()
     heading, save_col = st.columns([3, 1])
     heading.subheader("Scored creator candidates")
@@ -149,14 +186,14 @@ if "results" in st.session_state and st.session_state["results"]:
     filename = f"prenew_{meta.get('platform', 'creators')}_{meta.get('region', 'eu')}_{date.today().isoformat()}.csv"
     save_col.download_button(
         "Save as CSV",
-        data=creators_to_csv(st.session_state["results"]),
+        data=creators_to_csv(results),
         file_name=filename,
         mime="text/csv",
         icon=":material/download:",
         width="stretch",
     )
 
-    for idx, creator in enumerate(st.session_state["results"]):
+    for idx, creator in enumerate(results):
         score = creator.get("relevance_score", 0)
         
         # Color badge based on score
