@@ -106,13 +106,25 @@ min_subscribers = st.sidebar.number_input("Min Subscribers", value=1000, step=10
 max_subscribers = st.sidebar.number_input("Max Subscribers", value=250000, step=10000)
 
 def countries_to_search(selected: list[str]) -> list[str] | None:
-    """Country codes to sweep. None keeps the default main-market list."""
-    if "EU" in selected:
-        extras = [code for code in selected if code != "EU" and code not in EU_SWEEP_REGIONS]
-        if not extras:
-            return None
-        return list(dict.fromkeys([*EU_SWEEP_REGIONS, *extras]))
-    return [code for code in selected if code != "EU"]
+    """Country codes to sweep. None keeps the default main-market list.
+
+    Specific countries replace the broad EU option, so a Germany selection
+    searches Germany even if "All main EU markets" is still highlighted.
+    """
+    specific = [code for code in selected if code != "EU"]
+    if specific:
+        return specific
+    return None
+
+
+def reconcile_regions(current: list[str], previous: list[str]) -> list[str]:
+    """Keep "all EU markets" from sitting alongside a specific country."""
+    added = [code for code in current if code not in previous]
+    if "EU" in added and len(current) > 1:
+        return ["EU"]
+    if any(code != "EU" for code in added) and "EU" in current:
+        return [code for code in current if code != "EU"]
+    return current
 
 
 def region_file_slug(selected: list[str]) -> str:
@@ -123,14 +135,27 @@ def region_file_slug(selected: list[str]) -> str:
 
 
 region_options = ["EU"] + sorted(EUROPEAN_COUNTRIES)
+if "target_regions" not in st.session_state:
+    st.session_state["target_regions"] = ["EU"]
+    st.session_state["_regions_prev"] = ["EU"]
+
+
+def _sync_regions() -> None:
+    current = list(st.session_state["target_regions"])
+    previous = list(st.session_state.get("_regions_prev") or [])
+    st.session_state["target_regions"] = reconcile_regions(current, previous)
+    st.session_state["_regions_prev"] = list(st.session_state["target_regions"])
+
+
 selected_regions = st.sidebar.multiselect(
     "Target regions",
     region_options,
-    default=["EU"],
     format_func=lambda c: "All main EU markets" if c == "EU"
     else f"{c} — {EUROPEAN_COUNTRIES[c]}" + ("" if c in EU_COUNTRIES else " (non-EU)"),
     placeholder="Choose one or more countries",
-    help="Pick several countries, or All main EU markets (Germany, France, Netherlands, Poland, Sweden, Finland, Spain, Italy, Denmark, Austria). Extra countries are added to that sweep.",
+    help="Choose one or more countries. All main EU markets searches Germany, France, the Netherlands, Poland, Sweden, Finland, Spain, Italy, Denmark, and Austria. Picking a country searches only that country.",
+    key="target_regions",
+    on_change=_sync_regions,
 )
 require_verified_country = st.sidebar.checkbox("Only channels with a verified European country", value=False)
 

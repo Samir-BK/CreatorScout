@@ -35,11 +35,13 @@ from modules.discovery import (
     GAME_KEYWORDS,
     LOCAL_SEARCH_LANGUAGE,
     TOPIC_KEYWORDS,
+    accepts_search_country,
     build_risk_flags,
     compute_view_stats,
     detect_terms,
     extract_email,
     localize_keyword,
+    region_room,
 )
 
 _USER_AGENT = (
@@ -314,11 +316,14 @@ def search_tiktok_micro_influencers(
     session = requests.Session()
     seen_handles: set = set()
     profiles: List[Dict] = []
+    share_regions = len(regions) if sweep_regions is not None and len(regions) > 1 else 1
 
-    for code in regions:
-        if len(profiles) >= target_pool:
+    for index, code in enumerate(regions):
+        room = region_room(index, len(profiles), target_pool, share_regions)
+        if room <= 0:
             break
         country_name = EUROPEAN_COUNTRIES[code]
+        added = 0
 
         for hit in search_index(keyword, code, per_region_limit):
             handle = hit["handle"].lower()
@@ -342,6 +347,8 @@ def search_tiktok_micro_influencers(
                 continue  # creator explicitly outside Europe
             country_verified = detected is not None
             if require_verified_country and not country_verified:
+                continue
+            if not accepts_search_country(detected, code):
                 continue
             country_code = detected or code
 
@@ -434,7 +441,8 @@ def search_tiktok_micro_influencers(
                 profile["contact_email"] = "N/A (check bio link / TikTok business email button)"
 
             profiles.append(profile)
-            if len(profiles) >= target_pool:
+            added += 1
+            if added >= room or len(profiles) >= target_pool:
                 break
 
     profiles.sort(key=lambda p: (

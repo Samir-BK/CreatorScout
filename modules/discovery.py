@@ -241,6 +241,29 @@ def resolve_country(about_country: Optional[str]) -> Optional[str]:
     return _COUNTRY_ALIASES.get(key)
 
 
+def accepts_search_country(detected: Optional[str], search_code: str) -> bool:
+    """Whether a creator belongs in the country currently being searched.
+
+    An unknown country stays, labeled with the search region. A published
+    country has to be that same region, so a Germany search does not keep a
+    creator who says they are based in France.
+    """
+    return not detected or detected == search_code
+
+
+def region_room(index: int, taken: int, target: int, region_count: int) -> int:
+    """How many more creators this country may add.
+
+    One country fills the whole list. Several countries share it, and a later
+    country can use slots an earlier country did not fill.
+    """
+    if region_count <= 1:
+        return max(0, target - taken)
+    fair = max(1, (target + region_count - 1) // region_count)
+    shortfall = max(0, fair * index - taken)
+    return max(0, min(fair + shortfall, target - taken))
+
+
 def localize_keyword(keyword: str, lang: str) -> Optional[str]:
     """
     Best-effort translation of an English niche query into the local language
@@ -444,12 +467,17 @@ def search_micro_influencers(
 
     seen_channels: set = set()
     profiles: List[Dict] = []
+    # An explicit multi-country pick must visit every country. The default EU
+    # sweep still fills from the largest markets and stops when the pool is full.
+    share_regions = len(regions) if sweep_regions is not None and len(regions) > 1 else 1
 
-    for code in regions:
-        if len(profiles) >= target_pool:
+    for index, code in enumerate(regions):
+        room = region_room(index, len(profiles), target_pool, share_regions)
+        if room <= 0:
             break
 
         country_name = EUROPEAN_COUNTRIES[code]
+        added = 0
         search_lang = language or LOCAL_SEARCH_LANGUAGE.get(code, "en")
 
         with YouTube(language=search_lang, region=code) as search_yt, \
@@ -489,6 +517,8 @@ def search_micro_influencers(
                     # Channel explicitly lists a non-European country.
                     continue
                 if require_verified_country and not country_verified:
+                    continue
+                if not accepts_search_country(country_code if country_verified else None, code):
                     continue
 
                 subscribers = parse_count(channel.subscribers)
@@ -546,8 +576,9 @@ def search_micro_influencers(
                 }
                 profile["risk_flags"] = build_risk_flags(profile, max_subscribers)
                 profiles.append(profile)
+                added += 1
 
-                if len(profiles) >= target_pool:
+                if added >= room or len(profiles) >= target_pool:
                     break
 
     # Verified EU creators first, then by how well avg views sit inside the micro band.
