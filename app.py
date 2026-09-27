@@ -99,7 +99,55 @@ platform = st.sidebar.selectbox("Target Platform", list(LIVE_SCRAPERS))
 keyword = st.sidebar.text_input("Target Keyword / Niche", value="budget gaming pc build")
 
 st.sidebar.subheader("Filter Settings")
-max_results = st.sidebar.slider("Max Candidates", min_value=1, max_value=10, value=3)
+if "candidate_count" not in st.session_state:
+    st.session_state["candidate_count"] = 3
+
+
+def _remember_candidate_count() -> None:
+    """Keep the slider and the typed count on the same number."""
+    if st.session_state.get("any_candidate_count"):
+        st.session_state["candidate_count"] = int(st.session_state["candidate_count_input"])
+    else:
+        st.session_state["candidate_count"] = int(st.session_state["candidate_count_slider"])
+
+
+def _switch_candidate_mode() -> None:
+    """Copy the current count into whichever control is about to be shown."""
+    count = int(st.session_state["candidate_count"])
+    if st.session_state.get("any_candidate_count"):
+        st.session_state["candidate_count_input"] = max(1, count)
+    else:
+        shown = min(10, max(1, count))
+        st.session_state["candidate_count_slider"] = shown
+        st.session_state["candidate_count"] = shown
+
+
+any_candidate_count = st.sidebar.checkbox(
+    "Any number of candidates",
+    key="any_candidate_count",
+    on_change=_switch_candidate_mode,
+    help="Turn this on to type any number of creators. The typed number and the slider stay on the same count.",
+)
+if any_candidate_count:
+    st.session_state["candidate_count_input"] = max(1, int(st.session_state["candidate_count"]))
+    max_results = int(st.sidebar.number_input(
+        "Max Candidates",
+        min_value=1,
+        step=1,
+        key="candidate_count_input",
+        on_change=_remember_candidate_count,
+        help="Type how many creators to fetch. Turn the option off to use the 1–10 slider.",
+    ))
+else:
+    st.session_state["candidate_count_slider"] = min(10, max(1, int(st.session_state["candidate_count"])))
+    max_results = int(st.sidebar.slider(
+        "Max Candidates",
+        min_value=1,
+        max_value=10,
+        key="candidate_count_slider",
+        on_change=_remember_candidate_count,
+    ))
+st.session_state["candidate_count"] = int(max_results)
 max_views = st.sidebar.number_input("Max Avg Views / Video", value=150000, step=10000)
 min_views = st.sidebar.number_input("Min Avg Views / Video", value=1000, step=1000)
 min_subscribers = st.sidebar.number_input("Min Subscribers", value=1000, step=1000)
