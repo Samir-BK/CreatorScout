@@ -6,13 +6,15 @@ from groq import Groq, RateLimitError
 
 load_dotenv()
 
-# Each model has its own daily token bucket. gpt-oss-20b is capped at 200k
-# tokens/day on the free tier, so scoring falls through to the next bucket.
+# gpt-oss-20b is capped at 200k tokens/day on the free tier and is not used.
+# Each model below has its own daily bucket; a full bucket is skipped for the
+# rest of this process so later creators are not scored against a dead model.
 _MODELS = (
     "openai/gpt-oss-120b",
     "qwen/qwen3.8-27b",
     "allam-2-7b",
 )
+_exhausted_models: set[str] = set()
 
 
 def get_groq_client():
@@ -94,15 +96,26 @@ def _parse_score(raw: str) -> dict:
     return data
 
 
+def _rate_limited(exc: Exception) -> bool:
+    if isinstance(exc, RateLimitError):
+        return True
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    text = str(exc).lower()
+    return "rate_limit" in text or "rate limit" in text
+
+
 def score_creator_fit(creator_data: dict) -> dict:
     """
     Evaluates creator fit against Prenew criteria (Niche, Risks, Trends).
     """
     client = get_groq_client()
     prompt = _prompt(creator_data)
-    last_error = None
+    saw_rate_limit = False
 
     for model in _MODELS:
+        if model in _exhausted_models:
+            continue
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -112,14 +125,14 @@ def score_creator_fit(creator_data: dict) -> dict:
                 temperature=0.2,
             )
             return _parse_score(response.choices[0].message.content)
-        except RateLimitError as exc:
-            last_error = exc
-            continue
         except Exception as exc:
-            last_error = exc
+            if _rate_limited(exc):
+                _exhausted_models.add(model)
+                saw_rate_limit = True
+                continue
             continue
 
-    if isinstance(last_error, RateLimitError):
+    if saw_rate_limit or _exhausted_models:
         return _heuristic_score(creator_data)
     return {
         "relevance_score": 0,
