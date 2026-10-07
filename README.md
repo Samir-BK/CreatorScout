@@ -2,9 +2,9 @@
 
 Finds and scores regional gaming micro-influencers across YouTube, TikTok and Instagram, so a small team can build an outreach list in minutes instead of days.
 
-**[Live demo](https://samir-bk-prompt-hackathon-app-ho7jn7.streamlit.app/)** · Built for [Prenew](https://prenew.com)'s European refurbished gaming PC marketplace · [Hackathon name, date, solo/team, result]
+**[Live demo](https://samir-bk-prompt-hackathon-app-ho7jn7.streamlit.app/)** ·  · [Hackathon name, date, solo/team, result]
 
-![CreatorScout dashboard](docs/screenshot.png)
+![CreatorScout dashboard](![alt text](image.png))
 
 ## The problem
 
