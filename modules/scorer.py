@@ -17,6 +17,10 @@ _MODELS = (
 _exhausted_models: set[str] = set()
 
 
+class ScoringConfigurationError(RuntimeError):
+    """Raised when Groq cannot authenticate the configured API key."""
+
+
 def get_groq_client():
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -126,6 +130,11 @@ def score_creator_fit(creator_data: dict) -> dict:
             )
             return _parse_score(response.choices[0].message.content)
         except Exception as exc:
+            if getattr(exc, "status_code", None) in (401, 403):
+                raise ScoringConfigurationError(
+                    "Groq rejected GROQ_API_KEY. Check that the key is valid and active "
+                    "in your local .env file or deployment environment."
+                ) from exc
             if _rate_limited(exc):
                 _exhausted_models.add(model)
                 saw_rate_limit = True

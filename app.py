@@ -12,7 +12,7 @@ from modules.discovery import (
 )
 from modules.tiktok_discovery import search_tiktok_micro_influencers
 from modules.insta_discovery import search_instagram_micro_influencers
-from modules.scorer import score_creator_fit
+from modules.scorer import ScoringConfigurationError, score_creator_fit
 
 CSV_FIELDS = [
     "platform", "channel_name", "channel_handle", "channel_url",
@@ -229,16 +229,22 @@ if st.button("🚀 Run Discovery & Scoring Engine"):
         if not raw_candidates:
             st.error("No creators found within the specified view filters.")
         else:
-            st.success(f"Fetched {len(raw_candidates)} creators. Scoring brand fit using Groq LLM...")
+            st.info(f"Fetched {len(raw_candidates)} creators. Scoring brand fit using Groq LLM...")
             
             scored_candidates = []
             progress_bar = st.progress(0)
             
-            for idx, creator in enumerate(raw_candidates):
-                score_data = score_creator_fit(creator)
-                creator.update(score_data)
-                scored_candidates.append(creator)
-                progress_bar.progress((idx + 1) / len(raw_candidates))
+            try:
+                for idx, creator in enumerate(raw_candidates):
+                    score_data = score_creator_fit(creator)
+                    creator.update(score_data)
+                    scored_candidates.append(creator)
+                    progress_bar.progress((idx + 1) / len(raw_candidates))
+            except ScoringConfigurationError as exc:
+                st.error(str(exc))
+                st.stop()
+
+            st.success(f"Scored {len(scored_candidates)} creators.")
                 
             # Sort by relevance score descending
             scored_candidates = sorted(scored_candidates, key=lambda x: x.get("relevance_score", 0), reverse=True)
