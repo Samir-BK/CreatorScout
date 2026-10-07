@@ -33,7 +33,15 @@ Search brief -> Translate to 8+ languages -> Collect public data (YT / TikTok / 
 
 ## Tech stack
 
-Python 3.12 · Streamlit · Groq API · pandas · requests / BeautifulSoup · ytscrape · ddgs
+| Tool | What it does here |
+|---|---|
+| Streamlit | Dashboard and deployment (Streamlit Cloud) |
+| ytscrape | YouTube channel data, view counts and transcripts |
+| requests + BeautifulSoup | TikTok page data |
+| ddgs (DuckDuckGo search) | Finds public Instagram profiles and Reels |
+| pandas | Cleaning, 30/90-day view averages, CSV export |
+| Groq API | LLM fit scoring with model fallback |
+| Cursor, Gemini, Claude | AI tools used while building |
 
 ## Run it locally
 
