@@ -1,66 +1,132 @@
 # CreatorScout
 
-Finds and scores regional gaming micro-influencers across YouTube, TikTok and Instagram, so a small team can build an outreach list in minutes instead of days.
+Finds and scores regional gaming micro-influencers across YouTube, TikTok, and Instagram, enabling small teams to build targeted outreach lists in minutes instead of days.
 
-**[Live demo](https://samir-bk-prompt-hackathon-app-ho7jn7.streamlit.app/)** ·  · [Hackathon name, date, solo/team, result]
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://samir-bk-prompt-hackathon-app-ho7jn7.streamlit.app/)
 
-![CreatorScout dashboard](![alt text](image.png))
+---
 
-## The problem
+## Screenshots
 
-Prenew wants to partner with small, local creators in markets like Finland and Germany. Two things make that hard:
+<p align="center">
+  <img width="1440" alt="CreatorScout Dashboard Overview" src="https://github.com/user-attachments/assets/c5ff8758-6650-479c-9740-2f6a79c1daaa" />
+</p>
 
-- **Language.** Local creators title videos in their own language (`halpa pelikone`, `günstiger gaming pc`), so English searches miss most of them.
-- **Manual work.** Checking each creator's reach, activity and fit by hand doesn't scale.
+<p align="center">
+  <img width="1440" alt="CreatorScout Influencer Scoring Details" src="https://github.com/user-attachments/assets/a54febcb-fe93-4265-a875-82d08efe8b5e" />
+</p>
 
-## What it does
+---
 
-1. **Translates** a search brief ("budget pc build") into 8+ European languages.
-2. **Collects** public creator data from YouTube, TikTok and Instagram.
-3. **Calculates** average views over 30 and 90 days, so one viral video doesn't make a creator look better than they are.
-4. **Scores** each creator 0-100 with an LLM that reads their transcripts, spots their niche, and flags risks.
-5. **Exports** a CSV (metrics, bio email, country, fit score) ready for outreach.
+## The Problem
 
-## How it works
+Partnering with regional micro-creators in local European markets (e.g., Finland, Germany) presents two major challenges:
 
+- **Language Barriers:** Local creators title videos in their native language (`halpa pelikone`, `günstiger gaming pc`), rendering English searches ineffective.
+- **Manual Overhead:** Vetting individual creator metrics, engagement, and content alignment by hand does not scale.
+
+---
+
+## What It Does
+
+1. **Multi-Language Search:** Translates a search brief (e.g., *"budget PC build"*) into 8+ European languages automatically.
+2. **Multi-Platform Scraping:** Collects public creator data across YouTube, TikTok, and Instagram.
+3. **Rolling Averages:** Calculates 30-day and 90-day average view counts to filter out creators inflated by single viral hits.
+4. **AI-Powered Fit Scoring:** Analyzes video transcripts, content niches, and risk factors using LLMs to score creators from 0–100.
+5. **CSV Export:** Generates an actionable CSV containing metrics, bio/contact emails, country data, and AI fit scores.
+
+---
+
+## Workflow Architecture
+
+```text
+Search Brief
+   │
+   ▼
+Translate Brief (8+ Languages)
+   │
+   ▼
+Data Collection (YouTube / TikTok / Instagram)
+   │
+   ▼
+Data Cleaning & Windowed Averages (30d / 90d Views)
+   │
+   ▼
+LLM Scoring & Risk Analysis (With Model Fallbacks)
+   │
+   ▼
+Streamlit Dashboard ──► Export CSV
 ```
-Search brief -> Translate to 8+ languages -> Collect public data (YT / TikTok / IG)
--> Clean + 30d/90d view averages -> LLM scoring (with fallback models) -> Dashboard + CSV
-```
 
-- **Scoring with fallback:** requests go to a primary Groq model and automatically fall back to smaller ones if it fails or is rate-limited.
-- **Why windowed averages:** a creator with one 2M-view video and nothing else looks great on a total, but not on a 30-day average.
+### Key Technical Decisions
 
-## Tech stack
+- **LLM Model Fallback System:** Requests target a primary Groq model and automatically cascade to secondary models during rate limits or API outages.
+- **Windowed Metrics over Total Counts:** Evaluates sustained viewer engagement rather than vanity totals to accurately assess audience quality.
 
-| Tool | What it does here |
-|---|---|
-| Streamlit | Dashboard and deployment (Streamlit Cloud) |
-| ytscrape | YouTube channel data, view counts and transcripts |
-| requests + BeautifulSoup | TikTok page data |
-| ddgs (DuckDuckGo search) | Finds public Instagram profiles and Reels |
-| pandas | Cleaning, 30/90-day view averages, CSV export |
-| Groq API | LLM fit scoring with model fallback |
-| Cursor, Gemini, Claude | AI tools used while building |
+---
 
-## Run it locally
+## Tech Stack
+
+| Tool / Library | Usage |
+| --- | --- |
+| Streamlit | Web application dashboard and cloud deployment |
+| ytscrape | Fetches YouTube channel metadata, view counts, and transcripts |
+| requests + BeautifulSoup | Scrapes public TikTok metadata |
+| ddgs | Discovers public Instagram profiles and Reels via DuckDuckGo Search |
+| pandas | Data manipulation, rolling 30/90-day view metrics, and CSV generation |
+| Groq API | High-speed LLM inference for fit scoring and transcript analysis |
+| Cursor / Claude / Gemini | AI development tools utilized during development |
+
+---
+
+## Local Setup
+
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Samir-BK/CreatorScout.git
-cd CreatorScout
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+git clone https://github.com/Samir-BK/Prompt-Hackathon.git
+cd Prompt-Hackathon
+```
+
+### 2. Set up a virtual environment
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+```
+
+### 3. Install dependencies
+
+```bash
 pip install -r requirements.txt
-echo 'GROQ_API_KEY="your-key"' > .env
+```
+
+### 4. Configure environment variables
+
+Create a `.env` file in the project root:
+
+```bash
+echo 'GROQ_API_KEY="your_groq_api_key_here"' > .env
+```
+
+### 5. Launch the application
+
+```bash
 streamlit run app.py
 ```
 
-## Limitations
+---
 
-- Collection relies on public pages and search indexes, so it can break when a platform changes its layout. A production version should use the official platform APIs.
-- LLM scores are a first-pass ranking, not a verdict. A human should review the shortlist.
-- [Anything else you noticed: accuracy, speed, missing data.]
+## Current Limitations
 
-## Next steps
+- **Web Scraping Dependency:** Relies on public HTML structures and search indexes, which are vulnerable to layout updates. Official APIs should be integrated for production use.
+- **LLM Ranking Nature:** AI scores serve as an automated preliminary filter; manual review of shortlisted candidates remains recommended.
+- **Rate Limits:** Rapid sequential searches may hit rate limits on search engine scraping modules.
 
-- Send outreach emails directly from the app (Gmail/Outlook).
-- Track which creators convert, to improve the scoring.
+---
+
+## Roadmap
+
+- [ ] Direct email outreach integration via Gmail / Outlook API
+- [ ] Conversion tracking pipeline to refine LLM scoring prompts over time
+- [ ] Extended support for Twitch and X (Twitter) profile discovery
