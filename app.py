@@ -82,9 +82,9 @@ def creators_to_csv(creators: list[dict]) -> str:
     return buffer.getvalue()
 
 # Page Setup
-st.set_page_config(page_title="Prenew | Creator Discovery Engine", layout="wide", page_icon="🎮")
+st.set_page_config(page_title="Creator Discovery Engine", layout="wide", page_icon="🎮")
 
-st.title("🎮 Prenew: Automated Micro-Influencer Engine")
+st.title("🎮 Automated Micro-Influencer Engine")
 st.caption("Automated creator discovery and transcript relevance scoring across Europe.")
 
 # Sidebar Controls
@@ -256,7 +256,7 @@ if "results" in st.session_state and st.session_state["results"]:
     heading, save_col = st.columns([3, 1])
     heading.subheader("Scored creator candidates")
     meta = st.session_state.get("results_meta") or {}
-    filename = f"prenew_{meta.get('platform', 'creators')}_{meta.get('region', 'eu')}_{date.today().isoformat()}.csv"
+    filename = f"creators_{meta.get('platform', 'creators')}_{meta.get('region', 'eu')}_{date.today().isoformat()}.csv"
     save_col.download_button(
         "Save as CSV",
         data=creators_to_csv(results),
